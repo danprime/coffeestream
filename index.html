@@ -1,0 +1,684 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Coffee Pourover Stream Detector</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                margin: 0;
+                padding: 20px;
+                background: #2c3e50;
+                color: white;
+                text-align: center;
+            }
+
+            .container {
+                max-width: 800px;
+                margin: 0 auto;
+            }
+
+            h1 {
+                color: #e67e22;
+                margin-bottom: 30px;
+            }
+
+            .video-container {
+                position: relative;
+                display: inline-block;
+                margin: 20px 0;
+                border: 3px solid #34495e;
+                border-radius: 10px;
+                overflow: hidden;
+            }
+
+            #video {
+                display: block;
+                width: 100%;
+                max-width: 640px;
+                height: auto;
+            }
+
+            #canvas {
+                display: none;
+            }
+
+            .roi-overlay {
+                position: absolute;
+                border: 2px solid #e74c3c;
+                border-radius: 5px;
+                pointer-events: none;
+                z-index: 10;
+            }
+
+            .roi-label {
+                position: absolute;
+                top: -25px;
+                left: 0;
+                background: #e74c3c;
+                color: white;
+                padding: 2px 8px;
+                font-size: 12px;
+                border-radius: 3px;
+            }
+
+            .status-panel {
+                background: #34495e;
+                padding: 20px;
+                border-radius: 10px;
+                margin: 20px 0;
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                gap: 15px;
+            }
+
+            .status-item {
+                background: #2c3e50;
+                padding: 15px;
+                border-radius: 8px;
+                border-left: 4px solid #3498db;
+            }
+
+            .status-item h3 {
+                margin: 0 0 10px 0;
+                color: #3498db;
+            }
+
+            .status-value {
+                font-size: 24px;
+                font-weight: bold;
+                margin: 5px 0;
+            }
+
+            .streaming {
+                color: #27ae60;
+            }
+            .dripping {
+                color: #f39c12;
+            }
+            .stopped {
+                color: #e74c3c;
+            }
+
+            .controls {
+                margin: 20px 0;
+            }
+
+            button {
+                background: #e67e22;
+                color: white;
+                border: none;
+                padding: 12px 24px;
+                margin: 0 10px;
+                border-radius: 5px;
+                cursor: pointer;
+                font-size: 16px;
+                transition: background 0.3s;
+            }
+
+            button:hover {
+                background: #d35400;
+            }
+
+            button:disabled {
+                background: #7f8c8d;
+                cursor: not-allowed;
+            }
+
+            .roi-setup {
+                background: #34495e;
+                padding: 20px;
+                border-radius: 10px;
+                margin: 20px 0;
+            }
+
+            .roi-setup p {
+                margin: 10px 0;
+                color: #bdc3c7;
+            }
+
+            .loading {
+                color: #f39c12;
+                font-size: 18px;
+                margin: 20px 0;
+            }
+
+            .error {
+                color: #e74c3c;
+                background: #2c3e50;
+                padding: 15px;
+                border-radius: 8px;
+                margin: 20px 0;
+            }
+
+            .history {
+                background: #34495e;
+                padding: 20px;
+                border-radius: 10px;
+                margin: 20px 0;
+                text-align: left;
+                max-height: 200px;
+                overflow-y: auto;
+            }
+
+            .history-item {
+                padding: 5px 0;
+                border-bottom: 1px solid #2c3e50;
+                font-family: monospace;
+            }
+
+            @media (max-width: 768px) {
+                .status-panel {
+                    grid-template-columns: 1fr;
+                }
+
+                button {
+                    display: block;
+                    width: 100%;
+                    margin: 10px 0;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>☕ Coffee Pourover Stream Detector</h1>
+
+            <div id="loading" class="loading">
+                Loading OpenCV.js... Please wait.
+            </div>
+
+            <div id="error" class="error" style="display: none"></div>
+
+            <div id="app" style="display: none">
+                <div class="controls">
+                    <button id="startBtn">Start Detection</button>
+                    <button id="stopBtn" disabled>Stop Detection</button>
+                    <button id="calibrateBtn">Calibrate ROI</button>
+                </div>
+
+                <div class="roi-setup">
+                    <h3>Setup Instructions:</h3>
+                    <p>
+                        1. Position your phone camera to view the coffee
+                        pourover
+                    </p>
+                    <p>
+                        2. Click "Calibrate ROI" and tap on the video where the
+                        coffee stream appears
+                    </p>
+                    <p>3. Click "Start Detection" to begin monitoring</p>
+                </div>
+
+                <div class="video-container">
+                    <video id="video" autoplay muted playsinline></video>
+                    <div
+                        id="roiOverlay"
+                        class="roi-overlay"
+                        style="display: none"
+                    >
+                        <div class="roi-label">Stream Detection Zone</div>
+                    </div>
+                </div>
+
+                <canvas id="canvas"></canvas>
+
+                <div class="status-panel">
+                    <div class="status-item">
+                        <h3>Current State</h3>
+                        <div id="currentState" class="status-value">
+                            Not Started
+                        </div>
+                    </div>
+                    <div class="status-item">
+                        <h3>Motion Level</h3>
+                        <div id="motionLevel" class="status-value">0</div>
+                    </div>
+                    <div class="status-item">
+                        <h3>Stream Count</h3>
+                        <div id="streamCount" class="status-value">0</div>
+                    </div>
+                    <div class="status-item">
+                        <h3>Detection Time</h3>
+                        <div id="detectionTime" class="status-value">00:00</div>
+                    </div>
+                </div>
+
+                <div class="history">
+                    <h3>Detection History</h3>
+                    <div id="historyLog"></div>
+                </div>
+            </div>
+        </div>
+
+        <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
+        <script>
+            class CoffeeStreamDetector {
+                constructor() {
+                    this.video = null;
+                    this.canvas = null;
+                    this.ctx = null;
+                    this.stream = null;
+                    this.isRunning = false;
+                    this.isCalibrating = false;
+                    this.cv = null;
+
+                    // Detection parameters
+                    this.roi = { x: 100, y: 100, width: 200, height: 400 };
+                    this.previousFrame = null;
+                    this.currentState = "NOT_STARTED";
+                    this.stateHistory = [];
+                    this.motionThreshold = 1000;
+                    this.noMotionFrames = 0;
+                    this.streamDetectionFrames = 0;
+                    this.startTime = null;
+
+                    // UI elements
+                    this.elements = {
+                        startBtn: document.getElementById("startBtn"),
+                        stopBtn: document.getElementById("stopBtn"),
+                        calibrateBtn: document.getElementById("calibrateBtn"),
+                        video: document.getElementById("video"),
+                        canvas: document.getElementById("canvas"),
+                        roiOverlay: document.getElementById("roiOverlay"),
+                        currentState: document.getElementById("currentState"),
+                        motionLevel: document.getElementById("motionLevel"),
+                        streamCount: document.getElementById("streamCount"),
+                        detectionTime: document.getElementById("detectionTime"),
+                        historyLog: document.getElementById("historyLog"),
+                        loading: document.getElementById("loading"),
+                        error: document.getElementById("error"),
+                        app: document.getElementById("app"),
+                    };
+
+                    this.setupEventListeners();
+                }
+
+                setupEventListeners() {
+                    this.elements.startBtn.addEventListener("click", () =>
+                        this.startDetection(),
+                    );
+                    this.elements.stopBtn.addEventListener("click", () =>
+                        this.stopDetection(),
+                    );
+                    this.elements.calibrateBtn.addEventListener("click", () =>
+                        this.toggleCalibration(),
+                    );
+                    this.elements.video.addEventListener("click", (e) =>
+                        this.handleVideoClick(e),
+                    );
+                }
+
+                async init() {
+                    try {
+                        // Get camera access
+                        this.stream = await navigator.mediaDevices.getUserMedia(
+                            {
+                                video: {
+                                    width: { ideal: 640 },
+                                    height: { ideal: 480 },
+                                    facingMode: "environment", // Use back camera on mobile
+                                },
+                            },
+                        );
+
+                        this.video = this.elements.video;
+                        this.canvas = this.elements.canvas;
+                        this.ctx = this.canvas.getContext("2d");
+
+                        this.video.srcObject = this.stream;
+
+                        // Wait for video to load
+                        await new Promise((resolve) => {
+                            this.video.onloadedmetadata = () => {
+                                this.canvas.width = this.video.videoWidth;
+                                this.canvas.height = this.video.videoHeight;
+                                this.updateROIOverlay();
+                                resolve();
+                            };
+                        });
+
+                        this.elements.app.style.display = "block";
+                        this.elements.loading.style.display = "none";
+                        this.logEvent("Camera initialized successfully");
+                    } catch (error) {
+                        this.showError(
+                            "Camera access denied or not available: " +
+                                error.message,
+                        );
+                    }
+                }
+
+                toggleCalibration() {
+                    this.isCalibrating = !this.isCalibrating;
+                    this.elements.calibrateBtn.textContent = this.isCalibrating
+                        ? "Click on Stream Area"
+                        : "Calibrate ROI";
+                    this.elements.calibrateBtn.style.background = this
+                        .isCalibrating
+                        ? "#e74c3c"
+                        : "#e67e22";
+                }
+
+                handleVideoClick(event) {
+                    if (!this.isCalibrating) return;
+
+                    const rect = this.video.getBoundingClientRect();
+                    const scaleX = this.video.videoWidth / rect.width;
+                    const scaleY = this.video.videoHeight / rect.height;
+
+                    const x = (event.clientX - rect.left) * scaleX;
+                    const y = (event.clientY - rect.top) * scaleY;
+
+                    // Set ROI centered on click point
+                    this.roi = {
+                        x: Math.max(
+                            0,
+                            Math.min(x - 100, this.video.videoWidth - 200),
+                        ),
+                        y: Math.max(
+                            0,
+                            Math.min(y - 200, this.video.videoHeight - 400),
+                        ),
+                        width: 200,
+                        height: 400,
+                    };
+
+                    this.updateROIOverlay();
+                    this.toggleCalibration();
+                    this.logEvent(
+                        `ROI set to: ${this.roi.x}, ${this.roi.y}, ${this.roi.width}x${this.roi.height}`,
+                    );
+                }
+
+                updateROIOverlay() {
+                    const rect = this.video.getBoundingClientRect();
+                    const scaleX = rect.width / this.video.videoWidth;
+                    const scaleY = rect.height / this.video.videoHeight;
+
+                    const overlay = this.elements.roiOverlay;
+                    overlay.style.left = this.roi.x * scaleX + "px";
+                    overlay.style.top = this.roi.y * scaleY + "px";
+                    overlay.style.width = this.roi.width * scaleX + "px";
+                    overlay.style.height = this.roi.height * scaleY + "px";
+                    overlay.style.display = "block";
+                }
+
+                startDetection() {
+                    this.isRunning = true;
+                    this.startTime = Date.now();
+                    this.elements.startBtn.disabled = true;
+                    this.elements.stopBtn.disabled = false;
+                    this.elements.calibrateBtn.disabled = true;
+
+                    this.logEvent("Detection started");
+                    this.detectFrame();
+                }
+
+                stopDetection() {
+                    this.isRunning = false;
+                    this.elements.startBtn.disabled = false;
+                    this.elements.stopBtn.disabled = true;
+                    this.elements.calibrateBtn.disabled = false;
+
+                    this.logEvent("Detection stopped");
+                    this.updateState("STOPPED");
+                }
+
+                detectFrame() {
+                    if (!this.isRunning || !this.cv) return;
+
+                    try {
+                        // Capture current frame
+                        this.ctx.drawImage(
+                            this.video,
+                            0,
+                            0,
+                            this.canvas.width,
+                            this.canvas.height,
+                        );
+
+                        // Get ROI image data
+                        const imageData = this.ctx.getImageData(
+                            this.roi.x,
+                            this.roi.y,
+                            this.roi.width,
+                            this.roi.height,
+                        );
+
+                        // Analyze frame with OpenCV
+                        const result = this.analyzeFrame(imageData);
+
+                        // Update UI
+                        this.updateUI(result);
+
+                        // Update detection time
+                        const elapsed = Math.floor(
+                            (Date.now() - this.startTime) / 1000,
+                        );
+                        const minutes = Math.floor(elapsed / 60);
+                        const seconds = elapsed % 60;
+                        this.elements.detectionTime.textContent = `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
+                    } catch (error) {
+                        console.error("Detection error:", error);
+                    }
+
+                    // Continue detection loop
+                    requestAnimationFrame(() => this.detectFrame());
+                }
+
+                analyzeFrame(imageData) {
+                    const src = this.cv.matFromImageData(imageData);
+                    const gray = new this.cv.Mat();
+                    const thresh = new this.cv.Mat();
+                    const contours = new this.cv.MatVector();
+                    const hierarchy = new this.cv.Mat();
+
+                    try {
+                        // Convert to grayscale
+                        this.cv.cvtColor(src, gray, this.cv.COLOR_RGBA2GRAY);
+
+                        // Apply threshold
+                        this.cv.threshold(
+                            gray,
+                            thresh,
+                            0,
+                            255,
+                            this.cv.THRESH_BINARY + this.cv.THRESH_OTSU,
+                        );
+
+                        // Find contours
+                        this.cv.findContours(
+                            thresh,
+                            contours,
+                            hierarchy,
+                            this.cv.RETR_EXTERNAL,
+                            this.cv.CHAIN_APPROX_SIMPLE,
+                        );
+
+                        // Analyze contours
+                        const streamContours = [];
+                        let totalMotion = 0;
+
+                        for (let i = 0; i < contours.size(); i++) {
+                            const contour = contours.get(i);
+                            const area = this.cv.contourArea(contour);
+
+                            if (area > 50) {
+                                // Filter small noise
+                                const rect = this.cv.boundingRect(contour);
+                                const aspectRatio = rect.height / rect.width;
+
+                                streamContours.push({
+                                    area,
+                                    aspectRatio,
+                                    rect,
+                                    width: rect.width,
+                                    height: rect.height,
+                                });
+
+                                totalMotion += area;
+                            }
+                        }
+
+                        // Determine state based on contour analysis
+                        const state = this.classifyStreamState(
+                            streamContours,
+                            totalMotion,
+                        );
+
+                        return {
+                            state,
+                            motionLevel: totalMotion,
+                            streamCount: streamContours.length,
+                            contours: streamContours,
+                        };
+                    } finally {
+                        // Clean up OpenCV matrices
+                        src.delete();
+                        gray.delete();
+                        thresh.delete();
+                        contours.delete();
+                        hierarchy.delete();
+                    }
+                }
+
+                classifyStreamState(contours, motionLevel) {
+                    if (motionLevel < 100) {
+                        this.noMotionFrames++;
+                        if (this.noMotionFrames > 30) {
+                            // ~1 second at 30fps
+                            return "STOPPED";
+                        }
+                    } else {
+                        this.noMotionFrames = 0;
+                    }
+
+                    // Check for stream characteristics
+                    const hasStream = contours.some(
+                        (c) =>
+                            c.area > 200 &&
+                            c.aspectRatio > 2.0 &&
+                            c.height > 50,
+                    );
+
+                    if (hasStream) {
+                        this.streamDetectionFrames++;
+                        return "STREAMING";
+                    } else if (contours.length > 0) {
+                        this.streamDetectionFrames = Math.max(
+                            0,
+                            this.streamDetectionFrames - 1,
+                        );
+                        return "DRIPPING";
+                    } else {
+                        return "NO_DETECTION";
+                    }
+                }
+
+                updateUI(result) {
+                    this.updateState(result.state);
+                    this.elements.motionLevel.textContent =
+                        result.motionLevel.toFixed(0);
+                    this.elements.streamCount.textContent = result.streamCount;
+                }
+
+                updateState(newState) {
+                    if (newState !== this.currentState) {
+                        this.currentState = newState;
+                        this.elements.currentState.textContent =
+                            newState.replace("_", " ");
+                        this.elements.currentState.className = `status-value ${newState.toLowerCase()}`;
+
+                        this.logEvent(`State changed to: ${newState}`);
+
+                        // Special handling for pour completion
+                        if (newState === "STOPPED") {
+                            this.onPourComplete();
+                        }
+                    }
+                }
+
+                onPourComplete() {
+                    // Trigger notifications, sounds, etc.
+                    this.logEvent("☕ Coffee pour completed!");
+
+                    // You could add:
+                    // - Browser notification
+                    // - Sound alert
+                    // - Timer recording
+                    // - Auto-stop detection
+
+                    if (
+                        "Notification" in window &&
+                        Notification.permission === "granted"
+                    ) {
+                        new Notification("Coffee pour completed!", {
+                            body: "Your coffee is ready",
+                            icon: "☕",
+                        });
+                    }
+                }
+
+                logEvent(message) {
+                    const timestamp = new Date().toLocaleTimeString();
+                    const logEntry = document.createElement("div");
+                    logEntry.className = "history-item";
+                    logEntry.textContent = `${timestamp}: ${message}`;
+
+                    this.elements.historyLog.insertBefore(
+                        logEntry,
+                        this.elements.historyLog.firstChild,
+                    );
+
+                    // Keep only last 20 entries
+                    while (this.elements.historyLog.children.length > 20) {
+                        this.elements.historyLog.removeChild(
+                            this.elements.historyLog.lastChild,
+                        );
+                    }
+                }
+
+                showError(message) {
+                    this.elements.error.textContent = message;
+                    this.elements.error.style.display = "block";
+                    this.elements.loading.style.display = "none";
+                }
+            }
+
+            // Initialize when OpenCV.js is loaded
+            let detector = null;
+
+            function onOpenCvReady() {
+                console.log("OpenCV.js is ready");
+                detector = new CoffeeStreamDetector();
+                detector.cv = cv; // Pass OpenCV reference
+                detector.init();
+
+                // Request notification permission
+                if ("Notification" in window) {
+                    Notification.requestPermission();
+                }
+            }
+
+            // Handle OpenCV.js loading
+            if (typeof cv !== "undefined") {
+                onOpenCvReady();
+            } else {
+                window.onOpenCvReady = onOpenCvReady;
+            }
+
+            // Handle page visibility for performance
+            document.addEventListener("visibilitychange", () => {
+                if (detector && detector.isRunning) {
+                    if (document.hidden) {
+                        detector.logEvent("Page hidden - detection paused");
+                    } else {
+                        detector.logEvent("Page visible - detection resumed");
+                    }
+                }
+            });
+        </script>
+    </body>
+</html>
