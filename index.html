@@ -142,6 +142,76 @@
                 color: #f39c12;
                 font-size: 18px;
                 margin: 20px 0;
+                text-align: center;
+            }
+
+            .loading-text {
+                font-size: 24px;
+                margin-bottom: 20px;
+                color: #e67e22;
+            }
+
+            .progress-container {
+                margin: 20px 0;
+            }
+
+            .progress-bar {
+                width: 100%;
+                height: 20px;
+                background: #34495e;
+                border-radius: 10px;
+                overflow: hidden;
+                margin: 10px 0;
+                border: 2px solid #2c3e50;
+            }
+
+            .progress-fill {
+                height: 100%;
+                background: linear-gradient(90deg, #e67e22, #f39c12);
+                width: 0%;
+                transition: width 0.3s ease;
+                border-radius: 8px;
+            }
+
+            .progress-text {
+                font-size: 18px;
+                font-weight: bold;
+                color: #f39c12;
+                margin: 10px 0;
+            }
+
+            .loading-details {
+                margin: 20px 0;
+                padding: 15px;
+                background: #34495e;
+                border-radius: 8px;
+            }
+
+            .loading-time {
+                font-size: 14px;
+                color: #95a5a6;
+                margin-top: 10px;
+            }
+
+            #loadingStatus {
+                color: #3498db;
+                font-weight: bold;
+                margin-bottom: 5px;
+            }
+
+            .retry-button {
+                background: #e74c3c;
+                color: white;
+                border: none;
+                padding: 10px 20px;
+                border-radius: 5px;
+                cursor: pointer;
+                font-size: 16px;
+                margin-top: 20px;
+            }
+
+            .retry-button:hover {
+                background: #c0392b;
             }
 
             .error {
@@ -186,7 +256,19 @@
             <h1>☕ Coffee Pourover Stream Detector</h1>
 
             <div id="loading" class="loading">
-                Loading OpenCV.js... Please wait.
+                <div class="loading-text">Loading OpenCV.js...</div>
+                <div class="progress-container">
+                    <div class="progress-bar">
+                        <div id="progressFill" class="progress-fill"></div>
+                    </div>
+                    <div id="progressText" class="progress-text">0%</div>
+                </div>
+                <div class="loading-details">
+                    <div id="loadingStatus">Initializing...</div>
+                    <div class="loading-time">
+                        This may take 30-60 seconds on first load
+                    </div>
+                </div>
             </div>
 
             <div id="error" class="error" style="display: none"></div>
@@ -252,7 +334,11 @@
             </div>
         </div>
 
-        <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
+        <script
+            async
+            src="https://docs.opencv.org/4.x/opencv.js"
+            onerror="handleOpenCvError()"
+        ></script>
         <script>
             class CoffeeStreamDetector {
                 constructor() {
@@ -290,9 +376,13 @@
                         loading: document.getElementById("loading"),
                         error: document.getElementById("error"),
                         app: document.getElementById("app"),
+                        progressFill: document.getElementById("progressFill"),
+                        progressText: document.getElementById("progressText"),
+                        loadingStatus: document.getElementById("loadingStatus"),
                     };
 
                     this.setupEventListeners();
+                    this.startLoadingProgress();
                 }
 
                 setupEventListeners() {
@@ -308,6 +398,74 @@
                     this.elements.video.addEventListener("click", (e) =>
                         this.handleVideoClick(e),
                     );
+                }
+
+                startLoadingProgress() {
+                    let progress = 0;
+                    const messages = [
+                        "Downloading OpenCV.js...",
+                        "Loading computer vision library...",
+                        "Initializing image processing...",
+                        "Setting up contour detection...",
+                        "Preparing motion analysis...",
+                        "Almost ready...",
+                    ];
+
+                    const progressInterval = setInterval(() => {
+                        progress += Math.random() * 3 + 1; // Random progress increments
+
+                        if (progress > 95) {
+                            progress = 95; // Don't complete until actually loaded
+                        }
+
+                        this.elements.progressFill.style.width = progress + "%";
+                        this.elements.progressText.textContent =
+                            Math.round(progress) + "%";
+
+                        // Update status message
+                        const messageIndex = Math.floor(
+                            (progress / 100) * messages.length,
+                        );
+                        if (messageIndex < messages.length) {
+                            this.elements.loadingStatus.textContent =
+                                messages[messageIndex];
+                        }
+
+                        // Stop the fake progress when we're close to completion
+                        if (progress >= 95) {
+                            clearInterval(progressInterval);
+                        }
+                    }, 500);
+
+                    // Set a timeout to show retry option if loading takes too long
+                    setTimeout(() => {
+                        if (this.elements.loading.style.display !== "none") {
+                            this.showRetryOption();
+                        }
+                    }, 60000); // 1 minute timeout
+                }
+
+                completeLoading() {
+                    this.elements.progressFill.style.width = "100%";
+                    this.elements.progressText.textContent = "100%";
+                    this.elements.loadingStatus.textContent =
+                        "OpenCV.js loaded successfully!";
+
+                    setTimeout(() => {
+                        this.elements.loading.style.display = "none";
+                        this.elements.app.style.display = "block";
+                    }, 1000);
+                }
+
+                showRetryOption() {
+                    const retryHTML = `
+                    <div style="margin-top: 20px;">
+                        <p style="color: #e74c3c;">OpenCV.js is taking longer than expected to load.</p>
+                        <p style="color: #95a5a6;">This might be due to a slow internet connection or server issues.</p>
+                        <button class="retry-button" onclick="location.reload()">Retry Loading</button>
+                    </div>
+                `;
+                    this.elements.loading.innerHTML += retryHTML;
                 }
 
                 async init() {
@@ -647,13 +805,36 @@
                 }
             }
 
+            // Handle script loading errors
+            function handleOpenCvError() {
+                console.error("Failed to load OpenCV.js script");
+                if (detector) {
+                    detector.showError(
+                        "Failed to download OpenCV.js. Please check your internet connection and try refreshing the page.",
+                    );
+                }
+            }
+
             // Initialize when OpenCV.js is loaded
             let detector = null;
 
             function onOpenCvReady() {
                 console.log("OpenCV.js is ready");
+
+                // Check if OpenCV actually loaded properly
+                if (typeof cv === "undefined" || !cv.Mat) {
+                    console.error("OpenCV.js failed to load properly");
+                    if (detector) {
+                        detector.showError(
+                            "OpenCV.js failed to load. Please refresh the page and try again.",
+                        );
+                    }
+                    return;
+                }
+
                 detector = new CoffeeStreamDetector();
                 detector.cv = cv; // Pass OpenCV reference
+                detector.completeLoading(); // Complete the loading animation
                 detector.init();
 
                 // Request notification permission
@@ -662,10 +843,46 @@
                 }
             }
 
-            // Handle OpenCV.js loading
+            // Handle OpenCV.js loading with better error handling
+            let loadTimeout;
+
+            function handleOpenCvLoad() {
+                clearTimeout(loadTimeout);
+
+                if (typeof cv !== "undefined" && cv.Mat) {
+                    onOpenCvReady();
+                } else {
+                    // Try again in a moment
+                    setTimeout(handleOpenCvLoad, 1000);
+                }
+            }
+
+            // Set up loading timeout
+            loadTimeout = setTimeout(() => {
+                console.error("OpenCV.js loading timeout");
+                if (detector) {
+                    detector.showError(
+                        "OpenCV.js failed to load within the expected time. Please check your internet connection and try refreshing the page.",
+                    );
+                }
+            }, 90000); // 90 second timeout
+
+            // Initialize detector instance for loading screen
+            detector = new CoffeeStreamDetector();
+
+            // Try to detect when OpenCV is ready
             if (typeof cv !== "undefined") {
-                onOpenCvReady();
+                handleOpenCvLoad();
             } else {
+                // Check periodically for OpenCV
+                const checkInterval = setInterval(() => {
+                    if (typeof cv !== "undefined") {
+                        clearInterval(checkInterval);
+                        handleOpenCvLoad();
+                    }
+                }, 1000);
+
+                // Also set the global callback
                 window.onOpenCvReady = onOpenCvReady;
             }
 
