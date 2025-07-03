@@ -716,28 +716,37 @@
                 }
 
                 analyzeFrame(imageData) {
-                    // --- Enhanced analysis with smoothing and drip rate ---
+                    // --- Enhanced analysis with smoothing, adaptive threshold, blur, and debug overlay ---
                     if (!this.areaHistory) this.areaHistory = [];
                     if (!this.aspectHistory) this.aspectHistory = [];
                     if (!this.dripTimestamps) this.dripTimestamps = [];
 
                     const src = this.cv.matFromImageData(imageData);
-                    const gray = new this.cv.Mat();
+                    const blur = new this.cv.Mat();
+                    const channel = new this.cv.Mat();
                     const thresh = new this.cv.Mat();
                     const contours = new this.cv.MatVector();
                     const hierarchy = new this.cv.Mat();
 
                     try {
-                        // Convert to grayscale
-                        this.cv.cvtColor(src, gray, this.cv.COLOR_RGBA2GRAY);
+                        // Use only the green channel (often best for water/coffee contrast)
+                        this.cv.cvtColor(src, channel, this.cv.COLOR_RGBA2RGB);
+                        let channels = new this.cv.MatVector();
+                        this.cv.split(channel, channels);
+                        let gray = channels.get(1); // green channel
 
-                        // Apply threshold
-                        this.cv.threshold(
-                            gray,
+                        // Blur to reduce noise
+                        this.cv.GaussianBlur(gray, blur, new this.cv.Size(5, 5), 0, 0, this.cv.BORDER_DEFAULT);
+
+                        // Adaptive threshold for variable lighting
+                        this.cv.adaptiveThreshold(
+                            blur,
                             thresh,
-                            0,
                             255,
-                            this.cv.THRESH_BINARY + this.cv.THRESH_OTSU,
+                            this.cv.ADAPTIVE_THRESH_GAUSSIAN_C,
+                            this.cv.THRESH_BINARY_INV,
+                            11,
+                            2
                         );
 
                         // Find contours
@@ -759,7 +768,7 @@
                         for (let i = 0; i < contours.size(); i++) {
                             const contour = contours.get(i);
                             const area = this.cv.contourArea(contour);
-                            if (area > 20) { // Lowered threshold for more sensitivity
+                            if (area > 8) { // Lowered threshold for more sensitivity
                                 const rect = this.cv.boundingRect(contour);
                                 const aspectRatio = rect.height / rect.width;
                                 streamContours.push({
@@ -790,7 +799,7 @@
                         // Drip detection: count circular/small contours as drips
                         const now = Date.now();
                         for (const c of streamContours) {
-                            if (c.area < 200 && c.aspectRatio < 1.5 && c.width > 5 && c.height > 5) {
+                            if (c.area < 120 && c.aspectRatio < 1.5 && c.width > 3 && c.height > 3) {
                                 // Only count as a new drip if last one was >200ms ago
                                 if (!this.lastDripTime || now - this.lastDripTime > 200) {
                                     this.dripTimestamps.push(now);
@@ -802,6 +811,26 @@
                         // Keep only last 10 seconds of drips
                         this.dripTimestamps = this.dripTimestamps.filter(ts => now - ts < 10000);
                         const dripRate = this.dripTimestamps.length / 10; // drips/sec
+
+                        // --- Debug overlay: draw contours on canvas ---
+                        if (!this.debugCanvas) {
+                            this.debugCanvas = document.createElement('canvas');
+                            this.debugCanvas.width = this.roi.width;
+                            this.debugCanvas.height = this.roi.height;
+                            this.debugCanvas.style.position = 'absolute';
+                            this.debugCanvas.style.left = this.elements.roiOverlay.style.left;
+                            this.debugCanvas.style.top = this.elements.roiOverlay.style.top;
+                            this.debugCanvas.style.pointerEvents = 'none';
+                            this.debugCanvas.style.zIndex = 20;
+                            this.elements.roiOverlay.parentNode.appendChild(this.debugCanvas);
+                        }
+                        const ctx = this.debugCanvas.getContext('2d');
+                        ctx.clearRect(0, 0, this.debugCanvas.width, this.debugCanvas.height);
+                        ctx.strokeStyle = '#00ff00';
+                        ctx.lineWidth = 2;
+                        for (const c of streamContours) {
+                            ctx.strokeRect(c.rect.x, c.rect.y, c.rect.width, c.rect.height);
+                        }
 
                         // Determine state based on contour analysis and drip rate
                         const state = this.classifyStreamState(
@@ -823,7 +852,8 @@
                         };
                     } finally {
                         src.delete();
-                        gray.delete();
+                        blur.delete();
+                        channel.delete();
                         thresh.delete();
                         contours.delete();
                         hierarchy.delete();
