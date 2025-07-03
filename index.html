@@ -280,17 +280,25 @@
                     <button id="calibrateBtn">Calibrate ROI</button>
                 </div>
 
-                <div class="roi-setup">
-                    <h3>Setup Instructions:</h3>
-                    <p>
-                        1. Position your phone camera to view the coffee
-                        pourover
-                    </p>
-                    <p>
-                        2. Click "Calibrate ROI" and tap on the video where the
-                        coffee stream appears
-                    </p>
-                    <p>3. Click "Start Detection" to begin monitoring</p>
+                <div class="status-panel">
+                    <div class="status-item">
+                        <h3>Current State</h3>
+                        <div id="currentState" class="status-value">
+                            Not Started
+                        </div>
+                    </div>
+                    <div style="display: none" class="status-item">
+                        <h3>Motion Level</h3>
+                        <div id="motionLevel" class="status-value">0</div>
+                    </div>
+                    <div style="display: none" class="status-item">
+                        <h3>Stream Count</h3>
+                        <div id="streamCount" class="status-value">0</div>
+                    </div>
+                    <div class="status-item">
+                        <h3>Detection Time</h3>
+                        <div id="detectionTime" class="status-value">00:00</div>
+                    </div>
                 </div>
 
                 <div class="video-container">
@@ -306,25 +314,17 @@
 
                 <canvas id="canvas"></canvas>
 
-                <div class="status-panel">
-                    <div class="status-item">
-                        <h3>Current State</h3>
-                        <div id="currentState" class="status-value">
-                            Not Started
-                        </div>
-                    </div>
-                    <div class="status-item">
-                        <h3>Motion Level</h3>
-                        <div id="motionLevel" class="status-value">0</div>
-                    </div>
-                    <div class="status-item">
-                        <h3>Stream Count</h3>
-                        <div id="streamCount" class="status-value">0</div>
-                    </div>
-                    <div class="status-item">
-                        <h3>Detection Time</h3>
-                        <div id="detectionTime" class="status-value">00:00</div>
-                    </div>
+                <div class="roi-setup">
+                    <h3>Setup Instructions:</h3>
+                    <p>
+                        1. Position your phone camera to view the coffee
+                        pourover
+                    </p>
+                    <p>
+                        2. Click "Calibrate ROI" and tap on the video where the
+                        coffee stream appears
+                    </p>
+                    <p>3. Click "Start Detection" to begin monitoring</p>
                 </div>
 
                 <div class="history">
