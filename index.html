@@ -383,6 +383,8 @@
 
                     this.setupEventListeners();
                     this.startLoadingProgress();
+                    // Initialize ROI drag/touch events for calibration
+                    setTimeout(() => this.initROIDragEvents(), 0);
                 }
 
                 setupEventListeners() {
@@ -519,35 +521,122 @@
                         : "#e67e22";
                 }
 
-                handleVideoClick(event) {
-                    if (!this.isCalibrating) return;
+                // --- ROI selection by drag/touch ---
+                initROIDragEvents() {
+                    // For both mouse and touch
+                    const video = this.elements.video;
+                    let dragging = false;
+                    let startX = 0, startY = 0, endX = 0, endY = 0;
 
-                    const rect = this.video.getBoundingClientRect();
-                    const scaleX = this.video.videoWidth / rect.width;
-                    const scaleY = this.video.videoHeight / rect.height;
-
-                    const x = (event.clientX - rect.left) * scaleX;
-                    const y = (event.clientY - rect.top) * scaleY;
-
-                    // Set ROI centered on click point
-                    this.roi = {
-                        x: Math.max(
-                            0,
-                            Math.min(x - 100, this.video.videoWidth - 200),
-                        ),
-                        y: Math.max(
-                            0,
-                            Math.min(y - 200, this.video.videoHeight - 400),
-                        ),
-                        width: 200,
-                        height: 400,
+                    const getPos = (e) => {
+                        const rect = video.getBoundingClientRect();
+                        const scaleX = video.videoWidth / rect.width;
+                        const scaleY = video.videoHeight / rect.height;
+                        let clientX, clientY;
+                        if (e.touches && e.touches.length > 0) {
+                            clientX = e.touches[0].clientX;
+                            clientY = e.touches[0].clientY;
+                        } else {
+                            clientX = e.clientX;
+                            clientY = e.clientY;
+                        }
+                        return {
+                            x: (clientX - rect.left) * scaleX,
+                            y: (clientY - rect.top) * scaleY,
+                        };
                     };
 
+                    const overlay = this.elements.roiOverlay;
+
+                    const drawRect = () => {
+                        // Draw overlay rectangle during drag
+                        const x = Math.min(startX, endX);
+                        const y = Math.min(startY, endY);
+                        const w = Math.abs(endX - startX);
+                        const h = Math.abs(endY - startY);
+                        overlay.style.left = (x * video.getBoundingClientRect().width / video.videoWidth) + 'px';
+                        overlay.style.top = (y * video.getBoundingClientRect().height / video.videoHeight) + 'px';
+                        overlay.style.width = (w * video.getBoundingClientRect().width / video.videoWidth) + 'px';
+                        overlay.style.height = (h * video.getBoundingClientRect().height / video.videoHeight) + 'px';
+                        overlay.style.display = 'block';
+                    };
+
+                    // Mouse events
+                    video.addEventListener('mousedown', (e) => {
+                        if (!this.isCalibrating) return;
+                        dragging = true;
+                        const pos = getPos(e);
+                        startX = endX = pos.x;
+                        startY = endY = pos.y;
+                        drawRect();
+                        e.preventDefault();
+                    });
+                    video.addEventListener('mousemove', (e) => {
+                        if (!dragging || !this.isCalibrating) return;
+                        const pos = getPos(e);
+                        endX = pos.x;
+                        endY = pos.y;
+                        drawRect();
+                        e.preventDefault();
+                    });
+                    video.addEventListener('mouseup', (e) => {
+                        if (!dragging || !this.isCalibrating) return;
+                        dragging = false;
+                        const pos = getPos(e);
+                        endX = pos.x;
+                        endY = pos.y;
+                        this.setROIFromDrag(startX, startY, endX, endY);
+                        e.preventDefault();
+                    });
+                    video.addEventListener('mouseleave', (e) => {
+                        if (dragging && this.isCalibrating) {
+                            dragging = false;
+                            overlay.style.display = 'none';
+                        }
+                    });
+
+                    // Touch events
+                    video.addEventListener('touchstart', (e) => {
+                        if (!this.isCalibrating) return;
+                        dragging = true;
+                        const pos = getPos(e);
+                        startX = endX = pos.x;
+                        startY = endY = pos.y;
+                        drawRect();
+                        e.preventDefault();
+                    }, { passive: false });
+                    video.addEventListener('touchmove', (e) => {
+                        if (!dragging || !this.isCalibrating) return;
+                        const pos = getPos(e);
+                        endX = pos.x;
+                        endY = pos.y;
+                        drawRect();
+                        e.preventDefault();
+                    }, { passive: false });
+                    video.addEventListener('touchend', (e) => {
+                        if (!dragging || !this.isCalibrating) return;
+                        dragging = false;
+                        const pos = getPos(e.changedTouches && e.changedTouches[0] ? e : { touches: [e.changedTouches[0]] });
+                        endX = pos.x;
+                        endY = pos.y;
+                        this.setROIFromDrag(startX, startY, endX, endY);
+                        e.preventDefault();
+                    }, { passive: false });
+                }
+
+                setROIFromDrag(x1, y1, x2, y2) {
+                    // Clamp and set ROI from drag rectangle
+                    const minW = 20, minH = 20;
+                    let x = Math.max(0, Math.min(x1, x2));
+                    let y = Math.max(0, Math.min(y1, y2));
+                    let w = Math.max(minW, Math.abs(x2 - x1));
+                    let h = Math.max(minH, Math.abs(y2 - y1));
+                    if (x + w > this.video.videoWidth) w = this.video.videoWidth - x;
+                    if (y + h > this.video.videoHeight) h = this.video.videoHeight - y;
+                    this.roi = { x, y, width: w, height: h };
                     this.updateROIOverlay();
                     this.toggleCalibration();
-                    this.logEvent(
-                        `ROI set to: ${this.roi.x}, ${this.roi.y}, ${this.roi.width}x${this.roi.height}`,
-                    );
+                    this.logEvent(`ROI set to: ${x}, ${y}, ${w}x${h}`);
                 }
 
                 updateROIOverlay() {
