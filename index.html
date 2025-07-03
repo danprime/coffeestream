@@ -716,6 +716,11 @@
                 }
 
                 analyzeFrame(imageData) {
+                    // --- Enhanced analysis with smoothing and drip rate ---
+                    if (!this.areaHistory) this.areaHistory = [];
+                    if (!this.aspectHistory) this.aspectHistory = [];
+                    if (!this.dripTimestamps) this.dripTimestamps = [];
+
                     const src = this.cv.matFromImageData(imageData);
                     const gray = new this.cv.Mat();
                     const thresh = new this.cv.Mat();
@@ -747,16 +752,16 @@
                         // Analyze contours
                         const streamContours = [];
                         let totalMotion = 0;
+                        let dripDetected = false;
+                        let largestDripArea = 0;
+                        let largestDripAspect = 0;
 
                         for (let i = 0; i < contours.size(); i++) {
                             const contour = contours.get(i);
                             const area = this.cv.contourArea(contour);
-
-                            if (area > 50) {
-                                // Filter small noise
+                            if (area > 20) { // Lowered threshold for more sensitivity
                                 const rect = this.cv.boundingRect(contour);
                                 const aspectRatio = rect.height / rect.width;
-
                                 streamContours.push({
                                     area,
                                     aspectRatio,
@@ -764,15 +769,47 @@
                                     width: rect.width,
                                     height: rect.height,
                                 });
-
                                 totalMotion += area;
+                                if (area > largestDripArea) {
+                                    largestDripArea = area;
+                                    largestDripAspect = aspectRatio;
+                                }
                             }
                         }
 
-                        // Determine state based on contour analysis
+                        // Smoothing: keep history of last 5 largest area/aspect
+                        if (largestDripArea > 0) {
+                            this.areaHistory.push(largestDripArea);
+                            this.aspectHistory.push(largestDripAspect);
+                            if (this.areaHistory.length > 5) this.areaHistory.shift();
+                            if (this.aspectHistory.length > 5) this.aspectHistory.shift();
+                        }
+                        const avgArea = this.areaHistory.length > 0 ? this.areaHistory.reduce((a,b)=>a+b,0)/this.areaHistory.length : 0;
+                        const avgAspect = this.aspectHistory.length > 0 ? this.aspectHistory.reduce((a,b)=>a+b,0)/this.aspectHistory.length : 0;
+
+                        // Drip detection: count circular/small contours as drips
+                        const now = Date.now();
+                        for (const c of streamContours) {
+                            if (c.area < 200 && c.aspectRatio < 1.5 && c.width > 5 && c.height > 5) {
+                                // Only count as a new drip if last one was >200ms ago
+                                if (!this.lastDripTime || now - this.lastDripTime > 200) {
+                                    this.dripTimestamps.push(now);
+                                    this.lastDripTime = now;
+                                    dripDetected = true;
+                                }
+                            }
+                        }
+                        // Keep only last 10 seconds of drips
+                        this.dripTimestamps = this.dripTimestamps.filter(ts => now - ts < 10000);
+                        const dripRate = this.dripTimestamps.length / 10; // drips/sec
+
+                        // Determine state based on contour analysis and drip rate
                         const state = this.classifyStreamState(
                             streamContours,
                             totalMotion,
+                            avgArea,
+                            avgAspect,
+                            dripRate
                         );
 
                         return {
@@ -780,9 +817,11 @@
                             motionLevel: totalMotion,
                             streamCount: streamContours.length,
                             contours: streamContours,
+                            avgArea,
+                            avgAspect,
+                            dripRate,
                         };
                     } finally {
-                        // Clean up OpenCV matrices
                         src.delete();
                         gray.delete();
                         thresh.delete();
@@ -791,44 +830,53 @@
                     }
                 }
 
-                classifyStreamState(contours, motionLevel) {
-                    if (motionLevel < 100) {
+                classifyStreamState(contours, motionLevel, avgArea, avgAspect, dripRate) {
+                    // Enhanced logic: use smoothed area/aspect and drip rate
+                    if (motionLevel < 60) {
                         this.noMotionFrames++;
                         if (this.noMotionFrames > 30) {
-                            // ~1 second at 30fps
                             return "STOPPED";
                         }
                     } else {
                         this.noMotionFrames = 0;
                     }
 
-                    // Check for stream characteristics
-                    const hasStream = contours.some(
-                        (c) =>
-                            c.area > 200 &&
-                            c.aspectRatio > 2.0 &&
-                            c.height > 50,
-                    );
-
+                    // Streaming: large, thin contour (smoothed)
+                    const hasStream = avgArea > 120 && avgAspect > 2.5;
                     if (hasStream) {
                         this.streamDetectionFrames++;
                         return "STREAMING";
-                    } else if (contours.length > 0) {
-                        this.streamDetectionFrames = Math.max(
-                            0,
-                            this.streamDetectionFrames - 1,
-                        );
-                        return "DRIPPING";
-                    } else {
-                        return "NO_DETECTION";
                     }
+
+                    // Slowing down: drip rate < 0.5/sec but >0
+                    if (dripRate > 0 && dripRate < 0.5) {
+                        return "SLOWING_DOWN";
+                    }
+
+                    // Dripping: at least one drip/sec
+                    if (dripRate >= 0.5) {
+                        return "DRIPPING";
+                    }
+
+                    // No detection
+                    return "NO_DETECTION";
                 }
 
                 updateUI(result) {
                     this.updateState(result.state);
-                    this.elements.motionLevel.textContent =
-                        result.motionLevel.toFixed(0);
+                    this.elements.motionLevel.textContent = result.motionLevel.toFixed(0);
                     this.elements.streamCount.textContent = result.streamCount;
+                    // Show drip rate if available
+                    if (!this.elements.dripRate) {
+                        // Add drip rate to UI if not present
+                        const panel = document.querySelector('.status-panel');
+                        const div = document.createElement('div');
+                        div.className = 'status-item';
+                        div.innerHTML = '<h3>Drip Rate</h3><div id="dripRate" class="status-value">0</div>';
+                        panel.appendChild(div);
+                        this.elements.dripRate = document.getElementById('dripRate');
+                    }
+                    this.elements.dripRate.textContent = result.dripRate ? result.dripRate.toFixed(2) + ' /s' : '0';
                 }
 
                 updateState(newState) {
